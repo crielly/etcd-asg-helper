@@ -43,3 +43,11 @@ See constants.py for the authoritative list, but here's an explanation of each e
 ### Example
 
 ![Example](https://i.imgur.com/dLeMxay.png)
+
+## TODO
+
+* Test Suite
+* Make the tags we use to identify etcd less arbitrary/more flexible
+* Example Terraform Deployment
+* Improve exception handling
+* Improve log output (log levels etc)
