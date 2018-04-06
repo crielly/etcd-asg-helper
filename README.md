@@ -51,3 +51,4 @@ See constants.py for the authoritative list, but here's an explanation of each e
 * Example Terraform Deployment
 * Improve exception handling
 * Improve log output (log levels etc)
+* (Major) API Calls for removal of dead etcd peers from cluster
