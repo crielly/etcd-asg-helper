@@ -12,7 +12,7 @@ This lambda function has very simple functionality. It:
 
 1. Finds a list of servers matching specific tags - Environment, Project, and an arbitrary ID tag. TODO: Make this an arbitrary dict of tags
 
-2. Using those instances and the parameters provided via Environment Variables to the lambda function, it constructs the content of an SRV DNS record for etcd discovery
+2. Using those instances and the parameters provided via Environment Variables to the lambda function, constructs the content of an SRV DNS record for etcd discovery
 
 3. UPSERTs the specified SRV record in the specified Route53 Hosted Zone.
 
