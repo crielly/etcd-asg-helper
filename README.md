@@ -36,7 +36,7 @@ srv_record_ttl - Record TTL for your SRV Record
 etcd_port - the port you're running etcd on - will usually be 2380
 log_level - DEBUG, INFO, ERROR etc. Not currently super meaningful, as you can see if you take a glance at the code.
 
-![Example](https://imgur.com/a/88Wu9)
+![Example](https://i.imgur.com/dLeMxay.png)
 
 ## Motivation
 
