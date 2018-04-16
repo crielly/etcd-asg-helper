@@ -10,7 +10,7 @@ _LOGGER = logging.Logger('etcdasghelper')
 from constants import (
     PROJECT_NAME, ENV_NAME, ETCD_TAG_NAME, ETCD_PORT, ZONE_ID, SRV_RECORD_NAME, 
     DOMAIN_NAME, SRV_TTL, LOG_LEVEL, ETCD_CLIENT_CERT_SSM_PATH, ETCD_CLIENT_KEY_SSM_PATH,
-    ETCD_INTERNAL_API_DNS
+    ETCD_INTERNAL_API_DNS, ETCD_ROOT_CA_CERT_SSM_PATH
 )
 
 def get_instances(client, config, return_attribute):
@@ -190,6 +190,7 @@ def lambda_handler(event, context):
         LOG_LEVEL: os.environ.get(LOG_LEVEL, {}),
         ETCD_CLIENT_CERT_SSM_PATH: os.environ.get(ETCD_CLIENT_CERT_SSM_PATH, {}),
         ETCD_CLIENT_KEY_SSM_PATH: os.environ.get(ETCD_CLIENT_KEY_SSM_PATH, {}),
+        ETCD_ROOT_CA_CERT_SSM_PATH: os.environ.get(ETCD_ROOT_CA_CERT_SSM_PATH, {})
         ETCD_INTERNAL_API_DNS: os.environ.get(ETCD_INTERNAL_API_DNS, {})
     }
 
