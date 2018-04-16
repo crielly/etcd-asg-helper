@@ -8,9 +8,9 @@ from botocore.vendored import requests
 _LOGGER = logging.Logger('etcdasghelper')
 
 from constants import (
-    PROJECT_NAME, ENV_NAME, ETCD_TAG_NAME, ETCD_PORT, ZONE_ID, SRV_RECORD_NAME, 
+    PROJECT_NAME, ENV_NAME, ETCD_TAG_NAME, ETCD_PEER_PORT, ZONE_ID, SRV_RECORD_NAME, 
     DOMAIN_NAME, SRV_TTL, LOG_LEVEL, ETCD_CLIENT_CERT_SSM_PATH, ETCD_CLIENT_KEY_SSM_PATH,
-    ETCD_INTERNAL_API_DNS, ETCD_ROOT_CA_CERT_SSM_PATH
+    ETCD_API_DNS, ETCD_ROOT_CA_CERT_SSM_PATH, ETCD_CLIENT_LB_PORT
 )
 
 def get_instances(client, config, return_attribute):
@@ -43,7 +43,7 @@ def get_instances(client, config, return_attribute):
                     ]
             },
             {
-                'Name': 'tag:{}'.format(id_tag_name),
+                'Name': 'tag:{}'.format(config.get(ETCD_TAG_NAME, {})),
                 'Values': [
                     'True', 'true'
                     ]
@@ -79,7 +79,7 @@ def construct_srv_record_content(config, etcd_members):
         members.append(
             {
                 'Value': "0 0 {} {}".format(
-                    config.get(ETCD_PORT, {}), m
+                    config.get(ETCD_PEER_PORT, {}), m
                 )
             }
         )
@@ -134,34 +134,44 @@ def get_etcd_client_cert_key(client, config):
         WithDecryption=True
     )['Parameter']['Value']
 
+    with open("/tmp/etcd_client_cert.pem", "w") as certfile:
+        certfile.write(cert)
+        os.chmod("/tmp/etcd_client_cert.pem", 0o600)
+
     key = client.get_parameter(
         Name=config.get(ETCD_CLIENT_KEY_SSM_PATH, {}),
         WithDecryption=True
     )['Parameter']['Value']
+
+    with open("/tmp/etcd_client_key.pem", "w") as keyfile:
+        keyfile.write(key)
+        os.chmod("/tmp/etcd_client_key.pem", 0o600)
 
     cacert = client.get_parameter(
         Name=config.get(ETCD_ROOT_CA_CERT_SSM_PATH, {}),
         WithDecryption=True
     )['Parameter']['Value']
 
-    with open("/tmp/etcd_client_cert.pem", "w") as certfile:
-        certfile.write(cert)
-        os.chmod("/tmp/etcd_client_cert.pem", 0o600)
-
-    with open("/tmp/etcd_client_key.pem", "w") as keyfile:
-        keyfile.write(cert)
-        os.chmod("/tmp/etcd_client_key.pem", 0o600)
-
     with open("/tmp/etcd_cacert.pem", "w") as cacertfile:
-        cacertfile.write(cert)
+        cacertfile.write(cacert)
         os.chmod("/tmp/etcd_cacert.pem", 0o600)
 
 def get_etcd_members(config):
-    return requests.get(
-        'https://{}:{}/v2/members/'.format(ETCD_INTERNAL_API_DNS, ETCD_PORT),
-        cert=('/tmp/etcd-client-cert.pem', '/tmp/etcd-client-key.pem'),
-        verify='/tmp/etcd-cacert.pem'
+    members =  requests.get(
+        'https://{}:{}/v2/members'.format(
+            config.get(ETCD_API_DNS, {}),
+            config.get(ETCD_CLIENT_LB_PORT, {})
+        ),
+        cert=('/tmp/etcd_client_cert.pem', '/tmp/etcd_client_key.pem'),
+        verify=False,
+        timeout=10
     ).json()['members']
+
+    _LOGGER.info("Found members: {}".format(
+        members
+    ))
+
+    return members
 
 
 def setup_logging():
@@ -179,26 +189,27 @@ def lambda_handler(event, context):
     setup_logging()
 
     config = {
-        PROJECT_NAME: os.environ.get(PROJECT_NAME),
-        ENV_NAME: os.environ.get(ENV_NAME),
-        ETCD_TAG_NAME: os.environ.get(ETCD_TAG_NAME),
-        ZONE_ID: os.environ.get(ZONE_ID),
-        DOMAIN_NAME: os.environ.get(DOMAIN_NAME),
-        SRV_RECORD_NAME: os.environ.get(SRV_RECORD_NAME),
-        SRV_TTL: os.environ.get(SRV_TTL),
-        ETCD_PORT: os.environ.get(ETCD_PORT),
+        PROJECT_NAME: os.environ.get(PROJECT_NAME, {}),
+        ENV_NAME: os.environ.get(ENV_NAME, {}),
+        ZONE_ID: os.environ.get(ZONE_ID, {}),
+        DOMAIN_NAME: os.environ.get(DOMAIN_NAME, {}),
+        SRV_RECORD_NAME: os.environ.get(SRV_RECORD_NAME, {}),
+        SRV_TTL: os.environ.get(SRV_TTL, {}),
         LOG_LEVEL: os.environ.get(LOG_LEVEL, {}),
+        ETCD_PEER_PORT: os.environ.get(ETCD_PEER_PORT, {}),
+        ETCD_CLIENT_LB_PORT: os.environ.get(ETCD_CLIENT_LB_PORT, {}),
+        ETCD_TAG_NAME: os.environ.get(ETCD_TAG_NAME, {}),
         ETCD_CLIENT_CERT_SSM_PATH: os.environ.get(ETCD_CLIENT_CERT_SSM_PATH, {}),
         ETCD_CLIENT_KEY_SSM_PATH: os.environ.get(ETCD_CLIENT_KEY_SSM_PATH, {}),
-        ETCD_ROOT_CA_CERT_SSM_PATH: os.environ.get(ETCD_ROOT_CA_CERT_SSM_PATH, {})
-        ETCD_INTERNAL_API_DNS: os.environ.get(ETCD_INTERNAL_API_DNS, {})
+        ETCD_ROOT_CA_CERT_SSM_PATH: os.environ.get(ETCD_ROOT_CA_CERT_SSM_PATH, {}),
+        ETCD_API_DNS: os.environ.get(ETCD_API_DNS, {})
     }
 
     try:
         # Establish client connections
         route53 = boto3.client('route53')
         ec2 = boto3.client('ec2')
-        ssm = boto3.client('ssm')
+        ssm = boto3.client('ssm', region_name='us-east-2')
 
         # Fetch etcd client cert and key
         get_etcd_client_cert_key(ssm, config)
@@ -208,9 +219,12 @@ def lambda_handler(event, context):
 
         etcdmembers = get_etcd_members(config)
 
-        # Purge any dead peers
-        for m in etcdmembers:
-            if etcdservers:
+        #Purge any dead peers
+        if etcdmembers and etcdservers:
+            for m in etcdmembers:
+                _LOGGER.info("Examining etcd member {} with dns {}".format(
+                    m['id'], m['name']
+                ))
                 if m['name'] not in etcdservers:
                     _LOGGER.info(
                         "{} is a dead peer with id {}, removing".format(
@@ -219,10 +233,13 @@ def lambda_handler(event, context):
                     )
                     requests.delete(
                         'https://{}:{}/v2/members/{}'.format(
-                            ETCD_INTERNAL_API_DNS, ETCD_PORT, m['id']
+                            config.get(ETCD_API_DNS, {}),
+                            config.get(ETCD_CLIENT_LB_PORT, {}),
+                            m['id']
                         ),
-                        cert=('/tmp/etcd-client-cert.pem', '/tmp/etcd-client-key.pem'),
-                        verify='/tmp/etcd-cacert.pem'
+                        cert=('/tmp/etcd_client_cert.pem', '/tmp/etcd_client_key.pem'),
+                        verify=False,
+                        timeout=10
                     )
 
         # Construct content for etcd SRV Record
@@ -235,7 +252,6 @@ def lambda_handler(event, context):
 
     except Exception as e:
         _LOGGER.error(e)
-        exit(1)
 
 if __name__ == '__main__':
     lambda_handler({}, {})
