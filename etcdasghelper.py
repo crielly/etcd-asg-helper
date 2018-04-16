@@ -3,11 +3,14 @@ import logging
 import os
 import sys
 
+from botocore.vendored import requests
+
 _LOGGER = logging.Logger('etcdasghelper')
 
 from constants import (
     PROJECT_NAME, ENV_NAME, ETCD_TAG_NAME, ETCD_PORT, ZONE_ID, SRV_RECORD_NAME, 
-    DOMAIN_NAME, SRV_TTL, LOG_LEVEL
+    DOMAIN_NAME, SRV_TTL, LOG_LEVEL, ETCD_CLIENT_CERT_SSM_PATH, ETCD_CLIENT_KEY_SSM_PATH,
+    ETCD_INTERNAL_API_DNS
 )
 
 def get_instances(client, config, return_attribute):
@@ -121,6 +124,45 @@ def upsert_etcd_srv_record(client, config, record_content):
         resp['ResponseMetadata']['HTTPStatusCode']
     ))
 
+def get_etcd_client_cert_key(client, config):
+    """
+    Fetch etcd client certificate and private key and stash them in /tmp
+    """
+
+    cert = client.get_parameter(
+        Name=config.get(ETCD_CLIENT_CERT_SSM_PATH, {}),
+        WithDecryption=True
+    )['Parameter']['Value']
+
+    key = client.get_parameter(
+        Name=config.get(ETCD_CLIENT_KEY_SSM_PATH, {}),
+        WithDecryption=True
+    )['Parameter']['Value']
+
+    cacert = client.get_parameter(
+        Name=config.get(ETCD_ROOT_CA_CERT_SSM_PATH, {}),
+        WithDecryption=True
+    )['Parameter']['Value']
+
+    with open("/tmp/etcd_client_cert.pem", "w") as certfile:
+        certfile.write(cert)
+        os.chmod("/tmp/etcd_client_cert.pem", 0o600)
+
+    with open("/tmp/etcd_client_key.pem", "w") as keyfile:
+        keyfile.write(cert)
+        os.chmod("/tmp/etcd_client_key.pem", 0o600)
+
+    with open("/tmp/etcd_cacert.pem", "w") as cacertfile:
+        cacertfile.write(cert)
+        os.chmod("/tmp/etcd_cacert.pem", 0o600)
+
+def get_etcd_members(config):
+    return requests.get(
+        'https://{}:{}/v2/members/'.format(ETCD_INTERNAL_API_DNS, ETCD_PORT),
+        cert=('/tmp/etcd-client-cert.pem', '/tmp/etcd-client-key.pem'),
+        verify='/tmp/etcd-cacert.pem'
+    ).json()['members']
+
 
 def setup_logging():
     """Configure _LOGGER
@@ -145,16 +187,42 @@ def lambda_handler(event, context):
         SRV_RECORD_NAME: os.environ.get(SRV_RECORD_NAME),
         SRV_TTL: os.environ.get(SRV_TTL),
         ETCD_PORT: os.environ.get(ETCD_PORT),
-        LOG_LEVEL: os.environ.get(LOG_LEVEL, {})
+        LOG_LEVEL: os.environ.get(LOG_LEVEL, {}),
+        ETCD_CLIENT_CERT_SSM_PATH: os.environ.get(ETCD_CLIENT_CERT_SSM_PATH, {}),
+        ETCD_CLIENT_KEY_SSM_PATH: os.environ.get(ETCD_CLIENT_KEY_SSM_PATH, {}),
+        ETCD_INTERNAL_API_DNS: os.environ.get(ETCD_INTERNAL_API_DNS, {})
     }
 
     try:
         # Establish client connections
         route53 = boto3.client('route53')
         ec2 = boto3.client('ec2')
+        ssm = boto3.client('ssm')
+
+        # Fetch etcd client cert and key
+        get_etcd_client_cert_key(ssm, config)
 
         # Find current etcd servers
         etcdservers = get_instances(ec2, config, "PrivateDnsName")
+
+        etcdmembers = get_etcd_members(config)
+
+        # Purge any dead peers
+        for m in etcdmembers:
+            if etcdservers:
+                if m['name'] not in etcdservers:
+                    _LOGGER.info(
+                        "{} is a dead peer with id {}, removing".format(
+                            m['name'], m['id']
+                        )
+                    )
+                    requests.delete(
+                        'https://{}:{}/v2/members/{}'.format(
+                            ETCD_INTERNAL_API_DNS, ETCD_PORT, m['id']
+                        ),
+                        cert=('/tmp/etcd-client-cert.pem', '/tmp/etcd-client-key.pem'),
+                        verify='/tmp/etcd-cacert.pem'
+                    )
 
         # Construct content for etcd SRV Record
         recordcontent = construct_srv_record_content(config, etcdservers)
