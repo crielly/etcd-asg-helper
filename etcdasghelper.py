@@ -124,37 +124,65 @@ def upsert_etcd_srv_record(client, config, record_content):
         resp['ResponseMetadata']['HTTPStatusCode']
     ))
 
-def get_etcd_client_cert_key(client, config):
-    """
-    Fetch etcd client certificate and private key and stash them in /tmp
-    """
+# def get_etcd_client_cert_key(client, config):
+#     """
+#     Fetch etcd client certificate and private key and stash them in /tmp
+#     """
 
-    cert = client.get_parameter(
-        Name=config.get(ETCD_CLIENT_CERT_SSM_PATH, {}),
-        WithDecryption=True
-    )['Parameter']['Value']
+#     cert = client.get_parameter(
+#         Name=config.get(ETCD_CLIENT_CERT_SSM_PATH, {}),
+#         WithDecryption=True
+#     )['Parameter']['Value']
 
-    with open("/tmp/etcd_client_cert.pem", "w") as certfile:
-        certfile.write(cert)
-        os.chmod("/tmp/etcd_client_cert.pem", 0o600)
+#     with open("/tmp/etcd_client_cert.pem", "w") as certfile:
+#         certfile.write(cert)
+#         os.chmod("/tmp/etcd_client_cert.pem", 0o600)
 
-    key = client.get_parameter(
-        Name=config.get(ETCD_CLIENT_KEY_SSM_PATH, {}),
-        WithDecryption=True
-    )['Parameter']['Value']
+#     key = client.get_parameter(
+#         Name=config.get(ETCD_CLIENT_KEY_SSM_PATH, {}),
+#         WithDecryption=True
+#     )['Parameter']['Value']
 
-    with open("/tmp/etcd_client_key.pem", "w") as keyfile:
-        keyfile.write(key)
-        os.chmod("/tmp/etcd_client_key.pem", 0o600)
+#     with open("/tmp/etcd_client_key.pem", "w") as keyfile:
+#         keyfile.write(key)
+#         os.chmod("/tmp/etcd_client_key.pem", 0o600)
 
-    cacert = client.get_parameter(
-        Name=config.get(ETCD_ROOT_CA_CERT_SSM_PATH, {}),
-        WithDecryption=True
-    )['Parameter']['Value']
+#     cacert = client.get_parameter(
+#         Name=config.get(ETCD_ROOT_CA_CERT_SSM_PATH, {}),
+#         WithDecryption=True
+#     )['Parameter']['Value']
 
-    with open("/tmp/etcd_cacert.pem", "w") as cacertfile:
-        cacertfile.write(cacert)
-        os.chmod("/tmp/etcd_cacert.pem", 0o600)
+#     with open("/tmp/etcd_cacert.pem", "w") as cacertfile:
+#         cacertfile.write(cacert)
+#         os.chmod("/tmp/etcd_cacert.pem", 0o600)
+
+def update_etcd_cluster_state(client, config):
+    resp = requests.get(
+        'https://{}/health'.format(
+            config.get(ETCD_API_DNS, {})
+        ),
+        verify=False
+    )
+    if resp.status_code == 200 and resp.json()['health'] == 'true':
+        resp = client.put_parameter(
+            Name='/{}/{}/etcd/initial-cluster-state'.format(
+                config.get(PROJECT_NAME, {}),
+                config.get(ENV_NAME, {})
+            ),
+            Overwrite=True,
+            Type='SecureString',
+            Value='existing',
+        )
+    else:
+        resp = client.put_parameter(
+            Name='/{}/{}/etcd/initial-cluster-state'.format(
+                config.get(PROJECT_NAME, {}),
+                config.get(ENV_NAME, {})
+            ),
+            Overwrite=True,
+            Type='SecureString',
+            Value='new',
+        )
 
 def get_etcd_members(config):
     members =  requests.get(
@@ -162,7 +190,6 @@ def get_etcd_members(config):
             config.get(ETCD_API_DNS, {}),
             config.get(ETCD_CLIENT_LB_PORT, {})
         ),
-        cert=('/tmp/etcd_client_cert.pem', '/tmp/etcd_client_key.pem'),
         verify=False,
         timeout=10
     ).json()['members']
@@ -172,6 +199,22 @@ def get_etcd_members(config):
     ))
 
     return members
+
+def add_etcd_member(config, dns):
+
+    payload = '{"peerURLs": ["https://{}:{}"]}'.format(
+        dns,
+        config.get(ETCD_PEER_PORT, {})
+    )
+
+    resp = requests.post(
+        https://{}:{}/v2/members'.format(
+            config.get(ETCD_API_DNS, {}),
+            config.get(ETCD_CLIENT_LB_PORT, {})
+        ),
+        data=payload,
+        verify=False
+    )
 
 
 def setup_logging():
@@ -209,18 +252,27 @@ def lambda_handler(event, context):
         # Establish client connections
         route53 = boto3.client('route53')
         ec2 = boto3.client('ec2')
-        ssm = boto3.client('ssm', region_name='us-east-2')
+        ssm = boto3.client('ssm', region_name=os.environ.get('AWS_REGION'))
 
         # Fetch etcd client cert and key
-        get_etcd_client_cert_key(ssm, config)
+        #get_etcd_client_cert_key(ssm, config)
 
         # Find current etcd servers
         etcdservers = get_instances(ec2, config, "PrivateDnsName")
 
+        update_etcd_cluster_state(ssm, config)
+
         etcdmembers = get_etcd_members(config)
+
 
         #Purge any dead peers
         if etcdmembers and etcdservers:
+
+            for s in etcdservers:
+                _LOGGER.info("Examining etcd server with dns {}".format(s))
+                if not any(m['name'] == s for m in etcdmembers):
+                    add_etcd_member(s)
+
             for m in etcdmembers:
                 _LOGGER.info("Examining etcd member {} with dns {}".format(
                     m['id'], m['name']
