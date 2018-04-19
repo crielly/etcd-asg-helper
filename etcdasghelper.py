@@ -208,7 +208,7 @@ def add_etcd_member(config, dns):
     )
 
     resp = requests.post(
-        https://{}:{}/v2/members'.format(
+        'https://{}:{}/v2/members'.format(
             config.get(ETCD_API_DNS, {}),
             config.get(ETCD_CLIENT_LB_PORT, {})
         ),
@@ -260,39 +260,39 @@ def lambda_handler(event, context):
         # Find current etcd servers
         etcdservers = get_instances(ec2, config, "PrivateDnsName")
 
-        update_etcd_cluster_state(ssm, config)
+        # update_etcd_cluster_state(ssm, config)
 
-        etcdmembers = get_etcd_members(config)
+        # etcdmembers = get_etcd_members(config)
 
 
-        #Purge any dead peers
-        if etcdmembers and etcdservers:
+        # #Purge any dead peers
+        # if etcdmembers and etcdservers:
 
-            for s in etcdservers:
-                _LOGGER.info("Examining etcd server with dns {}".format(s))
-                if not any(m['name'] == s for m in etcdmembers):
-                    add_etcd_member(s)
+        #     for s in etcdservers:
+        #         _LOGGER.info("Examining etcd server with dns {}".format(s))
+        #         if not any(m['name'] == s for m in etcdmembers):
+        #             add_etcd_member(s)
 
-            for m in etcdmembers:
-                _LOGGER.info("Examining etcd member {} with dns {}".format(
-                    m['id'], m['name']
-                ))
-                if m['name'] not in etcdservers:
-                    _LOGGER.info(
-                        "{} is a dead peer with id {}, removing".format(
-                            m['name'], m['id']
-                        )
-                    )
-                    requests.delete(
-                        'https://{}:{}/v2/members/{}'.format(
-                            config.get(ETCD_API_DNS, {}),
-                            config.get(ETCD_CLIENT_LB_PORT, {}),
-                            m['id']
-                        ),
-                        cert=('/tmp/etcd_client_cert.pem', '/tmp/etcd_client_key.pem'),
-                        verify=False,
-                        timeout=10
-                    )
+        #     for m in etcdmembers:
+        #         _LOGGER.info("Examining etcd member {} with dns {}".format(
+        #             m['id'], m['name']
+        #         ))
+        #         if m['name'] not in etcdservers:
+        #             _LOGGER.info(
+        #                 "{} is a dead peer with id {}, removing".format(
+        #                     m['name'], m['id']
+        #                 )
+        #             )
+        #             requests.delete(
+        #                 'https://{}:{}/v2/members/{}'.format(
+        #                     config.get(ETCD_API_DNS, {}),
+        #                     config.get(ETCD_CLIENT_LB_PORT, {}),
+        #                     m['id']
+        #                 ),
+        #                 cert=('/tmp/etcd_client_cert.pem', '/tmp/etcd_client_key.pem'),
+        #                 verify=False,
+        #                 timeout=10
+        #             )
 
         # Construct content for etcd SRV Record
         recordcontent = construct_srv_record_content(config, etcdservers)
