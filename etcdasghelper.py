@@ -216,6 +216,25 @@ def add_etcd_member(config, dns):
         verify=False
     )
 
+def stash_masters_in_ssm(client, config, master_servers):
+    """Upsert a StringList at path /ProjectName/EnvName/masters/privateips with
+    a list of the Private IP Addresses found active in EC2
+    """
+
+    client.put_parameter(
+        Name='/{}/{}/masters/privateips'.format(
+            config.get(PROJECT_NAME, {}),
+            config.get(ENV_NAME, {})
+        ),
+        Description='List of Masters Private IPs for Project {} and Environment {}'.format(
+            config.get(PROJECT_NAME, {}),
+            config.get(ENV_NAME, {})
+        ),
+        Type='StringList',
+        Overwrite=True,
+        Value=' '.join(master_servers)
+    )
+
 
 def setup_logging():
     """Configure _LOGGER
@@ -259,6 +278,8 @@ def lambda_handler(event, context):
 
         # Find current etcd servers
         etcdservers = get_instances(ec2, config, "PrivateDnsName")
+
+        stash_masters_in_ssm(ssm, config, get_instances(ec2, config, "PrivateIpAddress"))
 
         # update_etcd_cluster_state(ssm, config)
 
