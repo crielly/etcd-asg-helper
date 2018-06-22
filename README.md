@@ -24,7 +24,7 @@ The intended use case for this Lambda is that it be triggered via CloudWatch Eve
 
 ## Deployment
 
-`make build` creates a .zip deploy packagge for Lambda. How you get it to Lambda after that is your business!
+`sls deploy --stage dev --region us-east-2 --r53zoneid ABCD50Q8F48Z0 --r53domain some.domain.com --project arbitraryname`
 
 ## Lambda Environment Variables
 

@@ -1,0 +1,52 @@
+service: "${opt:project}-etcd"
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${opt:env, 'dev'}
+  region: ${opt:region, 'us-east-2'}
+  memorySize: 1024
+  stackTags:
+    Name: ${self:service}
+    Environment: ${self:provider.stage}
+    Project: "${opt:project}"
+    Serverless: "True"
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "ec2:**"
+        - "logs:*"
+        - "kms:Decrypt"
+        - "ssm:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "route53:*"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:route53:::hostedzone/"
+            - "${opt:r53zoneid}"
+
+  # you can define service wide environment variables here
+  environment:
+    project_name: "${opt:project}"
+    environment: "${opt:env, 'dev'}"
+    domain_name: "${opt:r53domain}"
+    r53_zone_id: "${opt:r53zoneid}"
+    etcd_tag_name: "etcdserver"
+    etcd_client_cert_ssm_path: "/${opt:project}/${opt:env, 'dev'}/certs/etcd-asghelper-lambda-client-cert.pem"
+    etcd_client_key_ssm_path: "/${opt:project}/${opt:env, 'dev'}/certs/etcd-asghelper-lambda-client-key.pem"
+    etcd_root_ca_cert_ssm_path: "/${opt:project}/${opt:env, 'dev'}/certs/root-ca-cert.pem"
+    etcd_api_dns: "etcd-external.${opt:r53domain}"
+    srv_record_name: "_etcd-server-ssl._tcp"
+    srv_record_ttl: 60
+    etcd_peer_port: 2380
+    etcd_client_lb_port: 443
+    log_level: "DEBUG"
+
+functions:
+  dns-manager:
+    handler: etcdasghelper.lambda_handler
